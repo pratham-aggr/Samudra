@@ -65,6 +65,7 @@ class Trainer:
 
         # Distributed mode
         init_distributed_mode(cfg.distributed)
+        self.distributed_enabled = cfg.distributed.enabled
         dask.config.set(scheduler="synchronous")
 
         # Set seeds
@@ -230,8 +231,8 @@ class Trainer:
         self.inference_loader: DataLoader
 
     def init_inference_stores(self):
-        # Determine number of processes based on device
-        if using_gpu():
+        # Split inference periods across ranks only in distributed jobs
+        if self.distributed_enabled:
             num_splits = min(get_world_size(), len(self.inference_times))
         else:
             num_splits = 1
@@ -267,7 +268,7 @@ class Trainer:
             inference_datasets, num_steps_inf_set
         )
 
-        if using_gpu():
+        if self.distributed_enabled:
             self.inference_sampler = DistributedSampler(
                 inference_data_combined, shuffle=True
             )
@@ -300,6 +301,8 @@ class Trainer:
                 self.train_sampler.set_epoch(epoch)
             if isinstance(self.val_sampler, DistributedSampler):
                 self.val_sampler.set_epoch(epoch)
+            if isinstance(self.inference_sampler, DistributedSampler):
+                self.inference_sampler.set_epoch(epoch)
 
             start_epoch_train_time = time.time()
             train_loss = self.train_one_epoch(epoch)
@@ -507,7 +510,7 @@ class Trainer:
 
         logging.info("Instantiating torch loaders")
 
-        if using_gpu():
+        if self.distributed_enabled:
             self.train_sampler = DistributedSampler(train_data, shuffle=True)
             self.val_sampler = DistributedSampler(val_data, shuffle=False)
         else:

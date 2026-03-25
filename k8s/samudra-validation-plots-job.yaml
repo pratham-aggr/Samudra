@@ -1,0 +1,68 @@
+# CPU Job: build validation PNGs next to a rollout (reads OM4 data + predictions.zarr on PVC).
+# 1) Set PREDICTIONS_ZARR and OUTPUT_DIR to your rollout path (see rollout pod logs or:
+#    kubectl exec -n climate-analytics samudra-fetch-rollout -- find /data/samudra/rollout -name predictions.zarr
+#    when pod samudra-fetch-rollout is running.)
+# 2) Rebuild/push the rollout image after adding src/utils/validation_plots.py (same Dockerfile as rollout).
+# 3) kubectl apply -f k8s/samudra-validation-plots-job.yaml
+# 4) Copy locally, e.g.:
+#    POD=$(kubectl get pods -n climate-analytics -l job-name=samudra-validation-plots -o jsonpath='{.items[0].metadata.name}')
+#    kubectl cp -n climate-analytics "$POD:/data/samudra/rollout/YOUR_RUN_DIR/validation_plots" ./results/k8s-validation-plots
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: samudra-validation-plots
+  namespace: climate-analytics
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsUser: 1000
+      containers:
+        - name: validation-plots
+          image: docker.io/prathamagg/samudra-rollout:latest
+          imagePullPolicy: Always
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              cd /opt/samudra
+              if [ ! -e "${PREDICTIONS_ZARR}" ]; then
+                echo "ERROR: PREDICTIONS_ZARR not found: ${PREDICTIONS_ZARR}"
+                exit 1
+              fi
+              export PYTHONPATH=/opt/samudra/src
+              python -u /opt/samudra/src/utils/validation_plots.py \
+                --data-zarr "${DATA_ZARR}" \
+                --predictions-zarr "${PREDICTIONS_ZARR}" \
+                --output-dir "${OUTPUT_DIR}" \
+                --model-name "${MODEL_NAME}"
+          env:
+            - name: DATA_ZARR
+              value: "/data/samudra/data"
+            # Edit to match your rollout folder under /data/samudra/rollout/
+            - name: PREDICTIONS_ZARR
+              value: "/data/samudra/rollout/2026-03-25-rollout-om4_samudra-samudra-rollout-om4-p96pb/predictions.zarr"
+            - name: OUTPUT_DIR
+              value: "/data/samudra/rollout/2026-03-25-rollout-om4_samudra-samudra-rollout-om4-p96pb/validation_plots"
+            - name: MODEL_NAME
+              value: "Samudra"
+          resources:
+            # Nautilus: cpu limit/request ≤ 1.2 (same pattern as samudra-rollout-job)
+            requests:
+              cpu: "8"
+              memory: 48Gi
+            limits:
+              cpu: "9600m"
+              memory: 56Gi
+          volumeMounts:
+            - name: weatherbench
+              mountPath: /data
+      volumes:
+        - name: weatherbench
+          persistentVolumeClaim:
+            claimName: weatherbench

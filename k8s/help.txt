@@ -1,0 +1,46 @@
+1) Build image (linux/amd64 for Nautilus GPU nodes; run from repo root)
+   docker build --platform linux/amd64 -t docker.io/prathamagg/samudra-rollout:latest -f Dockerfile .
+
+2) Push
+   docker push docker.io/prathamagg/samudra-rollout:latest
+
+3) Apply rollout (ConfigMap + Job)
+   kubectl apply -f k8s/samudra-rollout-configmap.yaml -f k8s/samudra-rollout-job.yaml
+
+4) Watch pod / logs / describe (events, pull errors, scheduling)
+   kubectl get pods -n climate-analytics -l job-name=samudra-rollout-om4 -w
+   kubectl describe pod -n climate-analytics -l job-name=samudra-rollout-om4
+   kubectl logs -n climate-analytics -l job-name=samudra-rollout-om4 -f -c samudra-rollout
+
+   Same-day re-run: the Job passes --subname om4_samudra-$HOSTNAME so each pod gets a unique output dir under /data/samudra/rollout/ (no collision).
+   Local Docker / bare metal: use --subname myrun2, delete the rollout output folder, or pass --overwrite to replace it.
+
+6) Update config only (no image rebuild), then delete job + apply again
+   kubectl apply -f k8s/samudra-rollout-configmap.yaml
+   kubectl delete job samudra-rollout-om4 -n climate-analytics --ignore-not-found
+   kubectl apply -f k8s/samudra-rollout-job.yaml
+
+7) Data PVC upload pod (weatherbench → /data/samudra/…)
+   kubectl apply -f k8s/weatherbench-upload-pod.yaml
+   kubectl wait --for=condition=Ready pod/samudra-weatherbench-upload -n climate-analytics --timeout=120s
+   kubectl exec -n climate-analytics samudra-weatherbench-upload -- mkdir -p /data/samudra
+   kubectl cp ./scripts/data    climate-analytics/samudra-weatherbench-upload:/data/samudra/data
+   kubectl cp ./scripts/stats   climate-analytics/samudra-weatherbench-upload:/data/samudra/stats
+   kubectl cp ./scripts/weights climate-analytics/samudra-weatherbench-upload:/data/samudra/weights
+   kubectl delete pod samudra-weatherbench-upload -n climate-analytics
+
+8) Validation plots from PVC (same image as rollout; edit PREDICTIONS_ZARR + OUTPUT_DIR in the Job YAML)
+   Requires src/utils/validation_plots.py in the image (rebuild after pulling those files).
+   docker build --platform linux/amd64 -t docker.io/prathamagg/samudra-rollout:latest -f Dockerfile .
+   docker push docker.io/prathamagg/samudra-rollout:latest
+   kubectl delete job samudra-validation-plots -n climate-analytics --ignore-not-found
+   kubectl apply -f k8s/samudra-validation-plots-job.yaml
+   kubectl logs -n climate-analytics -l job-name=samudra-validation-plots -f
+   POD=$(kubectl get pods -n climate-analytics -l job-name=samudra-validation-plots -o jsonpath='{.items[0].metadata.name}')
+   kubectl cp -n climate-analytics "${POD}:/data/samudra/rollout/<your-run>/validation_plots" ./results/k8s-validation-plots
+
+9) JupyterLab pod (set JUPYTER_TOKEN in k8s/samudra-jupyter-pod.yaml; image must include jupyterlab from Dockerfile)
+   kubectl apply -f k8s/samudra-jupyter-pod.yaml
+   kubectl port-forward -n climate-analytics pod/samudra-jupyter 8888:8888
+   # Browser: http://127.0.0.1:8888/lab?token=YOUR_TOKEN
+   kubectl delete pod samudra-jupyter -n climate-analytics

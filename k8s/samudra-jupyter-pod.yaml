@@ -1,0 +1,72 @@
+# JupyterLab on the Samudra image + weatherbench PVC (read/write /data/samudra/...).
+#
+# 1) Set JUPYTER_TOKEN to a long random string before applying (or rely on port-forward + token from logs).
+# 2) Build & push image so jupyterlab is included: docker build ... -f Dockerfile .
+# 3) kubectl apply -f k8s/samudra-jupyter-pod.yaml
+# 4) kubectl wait --for=condition=Ready pod/samudra-jupyter -n climate-analytics --timeout=120s
+# 5) kubectl port-forward -n climate-analytics pod/samudra-jupyter 8888:8888
+#    Open http://127.0.0.1:8888/lab?token=<JUPYTER_TOKEN>
+#
+# Stop: kubectl delete pod samudra-jupyter -n climate-analytics
+apiVersion: v1
+kind: Pod
+metadata:
+  name: samudra-jupyter
+  namespace: climate-analytics
+  labels:
+    app: samudra-jupyter
+spec:
+  restartPolicy: Always
+  securityContext:
+    fsGroup: 1000
+    runAsGroup: 1000
+    runAsUser: 1000
+  containers:
+    - name: jupyter
+      image: docker.io/prathamagg/samudra-rollout:latest
+      imagePullPolicy: Always
+      ports:
+        - name: http
+          containerPort: 8888
+          protocol: TCP
+      env:
+        # Replace before apply; used as Jupyter login token.
+        - name: JUPYTER_TOKEN
+          value: "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
+        - name: HOME
+          value: /tmp/jupyter-home
+      command: ["/bin/bash", "-lc"]
+      args:
+        - |
+          set -euo pipefail
+          mkdir -p "$HOME"
+          cd /opt/samudra
+          exec jupyter lab \
+            --ip=0.0.0.0 \
+            --port=8888 \
+            --no-browser \
+            --ServerApp.token="${JUPYTER_TOKEN}" \
+            --ServerApp.allow_origin='*' \
+            --ServerApp.root_dir=/opt/samudra
+      volumeMounts:
+        - name: weatherbench
+          mountPath: /data
+        - name: shm
+          mountPath: /dev/shm
+      resources:
+        requests:
+          cpu: "2"
+          memory: 8Gi
+        limits:
+          cpu: "8"
+          memory: 32Gi
+          # Uncomment on GPU nodes if you need CUDA in the notebook:
+          # nvidia.com/gpu: "1"
+  volumes:
+    - name: weatherbench
+      persistentVolumeClaim:
+        claimName: weatherbench
+    - name: shm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 8Gi

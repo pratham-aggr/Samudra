@@ -1,14 +1,3 @@
-# Samudra image (CUDA + Python deps): use for k8s rollout and training. Code in /opt/samudra.
-#
-# NRP Nautilus GPU nodes are linux/amd64 — pin it so Apple Silicon (arm64) laptops
-# build the same image the cluster runs and avoid InvalidBaseImagePlatform warnings.
-#
-# Build:
-#   docker build --platform linux/amd64 -t docker.io/YOUR_USER/samudra-rollout:latest .
-# Push:
-#   docker push docker.io/YOUR_USER/samudra-rollout:latest
-# Then set the same image ref in k8s/samudra-rollout-job.yaml.
-
 FROM --platform=linux/amd64 docker.io/pytorch/pytorch:2.2.1-cuda12.1-cudnn8-runtime
 
 WORKDIR /opt/samudra
@@ -35,6 +24,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     huggingface-hub==0.23.4 \
     ipykernel==6.29.3 \
     ipywidgets==8.1.2 \
+    jupyterlab==4.2.5 \
     matplotlib==3.8.3 \
     nc-time-axis==1.4.1 \
     numpy==1.24.4 \

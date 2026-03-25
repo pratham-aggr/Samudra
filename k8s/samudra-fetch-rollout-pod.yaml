@@ -1,0 +1,24 @@
+# Ephemeral pod to read/copy rollout outputs from PVC weatherbench (mount at /data).
+# Apply, kubectl cp from the pod, then delete the pod.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: samudra-fetch-rollout
+  namespace: climate-analytics
+spec:
+  restartPolicy: Never
+  securityContext:
+    fsGroup: 1000
+    runAsGroup: 1000
+    runAsUser: 1000
+  containers:
+    - name: shell
+      image: alpine:3.20
+      command: ["sleep", "3600"]
+      volumeMounts:
+        - name: weatherbench
+          mountPath: /data
+  volumes:
+    - name: weatherbench
+      persistentVolumeClaim:
+        claimName: weatherbench

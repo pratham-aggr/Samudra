@@ -107,6 +107,7 @@ spec:
               python -u src/rollout.py \
                 --config /config/rollout_samudra_om4.yaml \
                 --ckpt_path "$CKPT" \
+                --subname "om4_samudra-${HOSTNAME}" \
                 --save_zarr
           env:
             - name: CKPT_PATH

@@ -2,6 +2,7 @@ import argparse
 import datetime
 import logging
 import os
+import shutil
 import time
 import traceback
 
@@ -195,6 +196,12 @@ def main():
     parser.add_argument("--subname", type=str, required=False)
     parser.add_argument("--ckpt_path", type=str, required=False)
     parser.add_argument("--save_zarr", default=False, action="store_true")
+    parser.add_argument(
+        "--overwrite",
+        default=False,
+        action="store_true",
+        help="Remove existing output directory if present (same-day re-run).",
+    )
     args = parser.parse_args()
 
     overrides = {}
@@ -210,10 +217,13 @@ def main():
     cfg = EvalConfig.from_yaml(args.config, overrides)
 
     if os.path.exists(cfg.experiment.output_dir):
-        raise ValueError(
-            f"Output directory {cfg.experiment.output_dir} already exists, "
-            "please delete it or use a different expt directory"
-        )
+        if args.overwrite:
+            shutil.rmtree(cfg.experiment.output_dir)
+        else:
+            raise ValueError(
+                f"Output directory {cfg.experiment.output_dir} already exists, "
+                "delete it, use --subname, or pass --overwrite"
+            )
     os.makedirs(cfg.experiment.output_dir, exist_ok=True)
 
     handle_logging(cfg)

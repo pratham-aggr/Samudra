@@ -31,7 +31,7 @@ data:
     step_transition: []
 
     distributed:
-      enabled: false
+      enabled: true
 
     experiment:
       name: train

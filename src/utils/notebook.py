@@ -1,5 +1,6 @@
 from copy import deepcopy
 
+import numpy as np
 import xarray as xr
 
 from utils.data import rename_vars
@@ -138,9 +139,24 @@ def postprocess_for_plot(ds_groundtruth, areacello, dz, pred_dict):
     return ds_groundtruth, pred_dict
 
 
-def process_data(data, pred_dict):
+def process_data(
+    data,
+    pred_dict,
+    *,
+    align_times: bool = False,
+    require_rollout_length_600: bool = True,
+):
     """
     Get plot ready OM4 data.
+
+    Args:
+        data: Raw OM4 xarray dataset (e.g. from open_dataset on data zarr).
+        pred_dict: Mapping with ``path`` and ``ls`` keys per model (see plotting notebook).
+        align_times: If True, align ground truth and predictions before combining levels (use for
+            rollout runs whose length differs from the paper's 600 steps). If prediction ``time`` is
+            integer (rollout ZarrWriter), the first ``n`` steps are paired with the first ``n`` OM4
+            times; otherwise times are intersected as calendar values.
+        require_rollout_length_600: If True, require prediction time size 600 (paper rollout).
     """
     ds_groundtruth = rename_vars(data)
 
@@ -156,20 +172,63 @@ def process_data(data, pred_dict):
             pred_dict[key]["path"], chunks={"time": 10, "lat": 180, "lon": 360}
         )
 
-        if ds_prediction.time.size != 600:
+        if require_rollout_length_600 and ds_prediction.time.size != 600:
             raise Exception(
                 "Are you sure your run is complete? Current prediction size: ",
                 ds_prediction.time.size,
             )
 
-        assert ds_prediction.time.size == ds_groundtruth.time.size, (
-            f"Sizes different for {key}: {ds_prediction.time.size}!="
-            f"{ds_groundtruth.time.size}"
-        )
+        if not align_times:
+            assert ds_prediction.time.size == ds_groundtruth.time.size, (
+                f"Sizes different for {key}: {ds_prediction.time.size}!="
+                f"{ds_groundtruth.time.size}"
+            )
         if "model_path" in ds_prediction.attrs:
             copy_dict[key]["model_path"] = ds_prediction.attrs["model_path"]
 
         pred_dict[key]["ds_prediction"] = ds_prediction
+
+    if align_times:
+        pred0 = pred_dict[next(iter(pred_dict))]["ds_prediction"]
+        tv = np.asarray(pred0.time.values)
+        # Rollout ZarrWriter uses step indices 0..N-1 (often int, sometimes float64 in zarr); OM4 uses cftime.
+        # intersect1d cannot mix those dtypes — align by position (first N steps).
+        use_positional = np.issubdtype(tv.dtype, np.integer) or (
+            np.issubdtype(tv.dtype, np.floating)
+            and tv.size > 0
+            and np.allclose(tv, np.arange(tv.size))
+        )
+
+        if use_positional:
+            n = ds_groundtruth.sizes["time"]
+            for key in pred_dict:
+                n = min(n, pred_dict[key]["ds_prediction"].sizes["time"])
+            if n == 0:
+                raise ValueError(
+                    "No overlapping time steps (empty ground truth or prediction)"
+                )
+            ds_groundtruth = ds_groundtruth.isel(time=slice(0, n))
+            for key in pred_dict:
+                pred_dict[key]["ds_prediction"] = pred_dict[key][
+                    "ds_prediction"
+                ].isel(time=slice(0, n))
+        else:
+            common = ds_groundtruth.time.values
+            for key in pred_dict:
+                common = np.intersect1d(
+                    common,
+                    pred_dict[key]["ds_prediction"].time.values,
+                    assume_unique=True,
+                )
+            if common.size == 0:
+                raise ValueError("No overlapping times between ground truth and predictions")
+            ds_groundtruth = ds_groundtruth.sel(time=common)
+            for key in pred_dict:
+                pred_dict[key]["ds_prediction"] = pred_dict[key]["ds_prediction"].sel(
+                    time=common
+                )
+        for key in pred_dict:
+            assert pred_dict[key]["ds_prediction"].time.size == ds_groundtruth.time.size
 
     ### Combine Variables by level
     ds_groundtruth, pred_dict = combine_variables_by_level(

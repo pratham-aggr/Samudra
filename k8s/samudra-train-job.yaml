@@ -40,6 +40,11 @@ spec:
                       - Tesla-T4
                       - NVIDIA-A10
                       - NVIDIA-L4
+                      # Full A100s (not just MIG slices)
+                      - NVIDIA-A100-SXM4-80GB
+                      - NVIDIA-A100-SXM4-40GB
+                      - NVIDIA-A100-80GB-PCIe
+                      - NVIDIA-A100-PCIe-40GB
                       - NVIDIA-A100-80GB-PCIe-MIG-1g.10gb
                       - NVIDIA-A100-SXM4-80GB-MIG-1g.10gb
                   - key: kubernetes.io/hostname
@@ -99,17 +104,18 @@ spec:
                 echo "ERROR: OM4 zarr not found at /data/samudra/data (expected .zmetadata)"
                 exit 1
               fi
-              python -u src/train.py --config /config/train_samudra_om4.yaml
+              torchrun --standalone --nproc_per_node=4 -u src/train.py \
+                --config /config/train_samudra_om4.yaml
           # NRP Nautilus: limit/request must be ≤ 1.2 for cpu and memory
           resources:
             requests:
               cpu: "8"
               memory: 64Gi
-              nvidia.com/gpu: "1"
+              nvidia.com/gpu: "4"
             limits:
               cpu: "9600m"
               memory: 76Gi
-              nvidia.com/gpu: "1"
+              nvidia.com/gpu: "4"
           volumeMounts:
             - name: weatherbench
               mountPath: /data
