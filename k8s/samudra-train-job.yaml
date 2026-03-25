@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: samudra-rollout-om4
+  name: samudra-train-om4
   namespace: climate-analytics
 spec:
   backoffLimit: 0
@@ -61,15 +61,15 @@ spec:
         runAsGroup: 1000
         runAsUser: 1000
       initContainers:
-        - name: init-rollout-output-dir
-          image: alpine
+        - name: init-train-output-dir
+          image: alpine:3.19
           command: ["/bin/sh", "-c"]
           args:
             - |
               set -e
-              mkdir -p /data/samudra/rollout
-              chown -R 1000:1000 /data/samudra/rollout
-              chmod -R 775 /data/samudra/rollout
+              mkdir -p /data/samudra/train
+              chown -R 1000:1000 /data/samudra/train
+              chmod -R 775 /data/samudra/train
           securityContext:
             runAsUser: 0
           resources:
@@ -83,8 +83,8 @@ spec:
             - name: weatherbench
               mountPath: /data
       containers:
-        - name: samudra-rollout
-          # Build from repo Dockerfile: docker build -t docker.io/YOUR_USER/samudra-rollout:latest .
+        - name: samudra-train
+          # Same image as rollout (repo Dockerfile)
           image: docker.io/prathamagg/samudra-rollout:latest
           imagePullPolicy: Always
           command: ["/bin/bash", "-c"]
@@ -95,23 +95,12 @@ spec:
               cd /opt/samudra
               nvidia-smi
               echo "PyTorch CUDA: $(python -c 'import torch; print(torch.cuda.is_available(), torch.cuda.device_count())')"
-              CKPT="${CKPT_PATH:-/data/samudra/weights/samudra_thermo_dynamic_seed1.pt}"
-              if [ ! -f "$CKPT" ]; then
-                echo "ERROR: checkpoint not found at $CKPT — set CKPT_PATH or add weights under /data/samudra/weights/"
-                exit 1
-              fi
               if [ ! -f /data/samudra/data/.zmetadata ]; then
                 echo "ERROR: OM4 zarr not found at /data/samudra/data (expected .zmetadata)"
                 exit 1
               fi
-              python -u src/rollout.py \
-                --config /config/rollout_samudra_om4.yaml \
-                --ckpt_path "$CKPT" \
-                --save_zarr
-          env:
-            - name: CKPT_PATH
-              value: "/data/samudra/weights/samudra_thermo_dynamic_seed1.pt"
-          # NRP Nautilus: limit/request must be ≤ 1.2 for cpu and memory (cluster policy).
+              python -u src/train.py --config /config/train_samudra_om4.yaml
+          # NRP Nautilus: limit/request must be ≤ 1.2 for cpu and memory
           resources:
             requests:
               cpu: "8"
@@ -124,7 +113,7 @@ spec:
           volumeMounts:
             - name: weatherbench
               mountPath: /data
-            - name: rollout-config
+            - name: train-config
               mountPath: /config
             - name: dshm
               mountPath: /dev/shm
@@ -132,9 +121,9 @@ spec:
         - name: weatherbench
           persistentVolumeClaim:
             claimName: weatherbench
-        - name: rollout-config
+        - name: train-config
           configMap:
-            name: samudra-rollout-config
+            name: samudra-train-config
         - name: dshm
           emptyDir:
             medium: Memory

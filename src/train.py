@@ -41,6 +41,12 @@ from utils.train import (
 )
 
 
+def _unwrap_ddp(model: nn.Module) -> nn.Module:
+    if isinstance(model, nn.parallel.DistributedDataParallel):
+        return model.module
+    return model
+
+
 class Trainer:
     def __init__(self, cfg) -> None:
         if not using_gpu():
@@ -180,8 +186,8 @@ class Trainer:
                 self.optimizer, T_max=cfg.epochs
             )
 
-        # Modify DDP setup based on device
-        if using_gpu():
+        # DDP only when distributed is initialized (torchrun / multi-GPU)
+        if using_gpu() and cfg.distributed.enabled:
             self.model = nn.SyncBatchNorm.convert_sync_batchnorm(self.model)
             self.model = nn.parallel.DistributedDataParallel(
                 self.model, device_ids=[cfg.distributed.gpu]
@@ -407,7 +413,7 @@ class Trainer:
         total_inf_loss = 0
         for _, (inference_dataset, num_steps) in enumerate(self.inference_loader):
             inference_loss = Stepper.inference(
-                model=self.model.module if using_gpu() else self.model,
+                model=_unwrap_ddp(self.model),
                 dataset=inference_dataset,
                 epoch=epoch,
                 num_model_steps_forward=num_steps,
@@ -567,9 +573,7 @@ class Trainer:
 
     def save_checkpoint(self, epoch, checkpoint_path):
         checkpoint = {
-            "model": self.model.module.state_dict()
-            if using_gpu()
-            else self.model.state_dict(),
+            "model": _unwrap_ddp(self.model).state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "epoch": epoch,
             "best_val_loss": self.best_val_loss,
