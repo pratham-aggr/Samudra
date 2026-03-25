@@ -44,12 +44,19 @@ class InferenceDataset(Dataset):
         self._boundary_data = data[boundary_vars]
 
         time_indices = np.arange(data.time.size)
+        total_steps = 2 * self.hist + 1
+        if len(time_indices) <= total_steps:
+            raise ValueError(
+                f"InferenceDataset: need more than {total_steps} time steps in the "
+                f"selected inference window (hist={self.hist}); got len(time)={len(time_indices)}. "
+                "Widen inference start/end in the config, or ensure data covers that range "
+                "(e.g. eval subset often starts ~2014-10-10, not 2014-01)."
+            )
         indices = xr.DataArray(
             time_indices,
             dims=["time"],
             coords={"time": time_indices},
         )
-        total_steps = 2 * self.hist + 1
         rolling_indices = indices.rolling(
             time=len(time_indices) - total_steps, center=False
         ).construct("window_dim")
