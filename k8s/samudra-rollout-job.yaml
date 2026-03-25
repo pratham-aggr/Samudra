@@ -1,0 +1,168 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: samudra-rollout-om4
+  namespace: climate-analytics
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: nvidia.com/gpu.product
+                    operator: In
+                    values:
+                      - NVIDIA-GeForce-RTX-4090
+            - weight: 80
+              preference:
+                matchExpressions:
+                  - key: nvidia.com/gpu.product
+                    operator: In
+                    values:
+                      - NVIDIA-GeForce-RTX-3090
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.product
+                    operator: NotIn
+                    values:
+                      - Quadro-M4000
+                      - NVIDIA-GeForce-GTX-1070
+                      - NVIDIA-GeForce-GTX-1080
+                      - NVIDIA-GeForce-GTX-1080-Ti
+                      - NVIDIA-GeForce-RTX-2080
+                      - NVIDIA-GeForce-RTX-2080-Ti
+                      - NVIDIA-TITAN-Xp
+                      - Tesla-T4
+                      - NVIDIA-A10
+                      - NVIDIA-L4
+                      - NVIDIA-A100-80GB-PCIe-MIG-1g.10gb
+                      - NVIDIA-A100-SXM4-80GB-MIG-1g.10gb
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values:
+                      - gpengine-uark.areon.net
+                      - fiona-1.famu.edu
+                      - fiona8.ucsc.edu
+                      - k8s-4090-02.calit2.optiputer.net
+                      - k8s-gpu-2.ucr.edu
+                      - k8s-dtn-01.uog.edu
+                      - k8s-3090-02.clemson.edu
+                      - suncave-16
+                      - k8s-haosu-16.sdsc.optiputer.net
+                      - nautilus01.hsrn.nyu.edu
+      restartPolicy: Never
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsUser: 1000
+      initContainers:
+        - name: clone-repo
+          image: alpine/git
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              BRANCH="${GIT_BRANCH:-pratham}"
+              git clone --single-branch --branch "$BRANCH" -- \
+                https://github.com/pratham-aggr/Samudra.git /src/code
+          env:
+            - name: GIT_BRANCH
+              value: "pratham"
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: git-repo
+              mountPath: /src
+        - name: init-rollout-output-dir
+          image: alpine
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              mkdir -p /data/samudra/rollout
+              chown -R 1000:1000 /data/samudra/rollout
+              chmod -R 775 /data/samudra/rollout
+          securityContext:
+            runAsUser: 0
+          resources:
+            requests:
+              cpu: "1"
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          volumeMounts:
+            - name: weatherbench
+              mountPath: /data
+      containers:
+        - name: samudra-rollout
+          image: docker.io/prathamagg/climatebench:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              export PYTHONUNBUFFERED=1
+              nvidia-smi
+              echo "PyTorch CUDA: $(python -c 'import torch; print(torch.cuda.is_available(), torch.cuda.device_count())')"
+              cd /src/code
+              # Remote clone may still pin <3.11; climatebench image uses Python 3.11
+              sed -i 's/requires-python = ">=3.10,<3.11"/requires-python = ">=3.10,<3.12"/' pyproject.toml 2>/dev/null || true
+              pip install -e . --quiet
+              CKPT="${CKPT_PATH:-/data/samudra/weights/samudra_thermo_dynamic_seed1.pt}"
+              if [ ! -f "$CKPT" ]; then
+                echo "ERROR: checkpoint not found at $CKPT — set CKPT_PATH or add weights under /data/samudra/weights/"
+                exit 1
+              fi
+              if [ ! -f /data/samudra/data/.zmetadata ]; then
+                echo "ERROR: OM4 zarr not found at /data/samudra/data (expected .zmetadata)"
+                exit 1
+              fi
+              python -u src/rollout.py \
+                --config /config/rollout_samudra_om4.yaml \
+                --ckpt_path "$CKPT" \
+                --save_zarr
+          env:
+            - name: CKPT_PATH
+              value: "/data/samudra/weights/samudra_thermo_dynamic_seed1.pt"
+          # NRP Nautilus: limit/request must be ≤ 1.2 for cpu and memory (cluster policy).
+          resources:
+            requests:
+              cpu: "8"
+              memory: 64Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "9600m"
+              memory: 76Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: git-repo
+              mountPath: /src
+            - name: weatherbench
+              mountPath: /data
+            - name: rollout-config
+              mountPath: /config
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: git-repo
+          emptyDir: {}
+        - name: weatherbench
+          persistentVolumeClaim:
+            claimName: weatherbench
+        - name: rollout-config
+          configMap:
+            name: samudra-rollout-config
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi

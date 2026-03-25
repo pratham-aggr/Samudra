@@ -1,0 +1,23 @@
+# Ephemeral pod to access the weatherbench PVC for kubectl cp uploads.
+# Usage: kubectl apply -f k8s/weatherbench-upload-pod.yaml
+#        kubectl wait --for=condition=Ready pod/samudra-weatherbench-upload -n climate-analytics --timeout=120s
+#        kubectl cp ... scripts/{data,stats,weights} climate-analytics/samudra-weatherbench-upload:/data/samudra/
+#        kubectl delete pod samudra-weatherbench-upload -n climate-analytics
+apiVersion: v1
+kind: Pod
+metadata:
+  name: samudra-weatherbench-upload
+  namespace: climate-analytics
+spec:
+  restartPolicy: Never
+  containers:
+    - name: idle
+      image: alpine:3.19
+      command: ["sleep", "86400"]
+      volumeMounts:
+        - name: weatherbench
+          mountPath: /data
+  volumes:
+    - name: weatherbench
+      persistentVolumeClaim:
+        claimName: weatherbench
