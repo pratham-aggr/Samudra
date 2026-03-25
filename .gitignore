@@ -9,6 +9,11 @@ outputs
 train
 rollout
 
+# Local datasets, statistics, and checkpoints (do not commit)
+data/
+stats/
+weights/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
